@@ -11,24 +11,20 @@ contents: read
 pages: write
 id-token: write
 
-concurrency:
-group: pages
-cancel-in-progress: true
-
 jobs:
 build:
 runs-on: ubuntu-latest
 steps:
-- name: Checkout repository
+- name: Checkout
 uses: actions/checkout@v4
 
-  - name: Find and extract ZIP
+  - name: Find ZIP
     shell: bash
     run: |
       set -euo pipefail
       ZIP_FILE="$(find . -type f -iname '*.zip' -not -path './.git/*' | head -n 1)"
       if [ -z "$ZIP_FILE" ]; then
-        echo "ERROR: No ZIP file found. Upload the project ZIP to the repository."
+        echo "ERROR: No ZIP file found."
         exit 1
       fi
       mkdir -p extracted
@@ -40,39 +36,42 @@ uses: actions/checkout@v4
       fi
       echo "PROJECT_DIR=$(dirname "$PACKAGE_FILE")" >> "$GITHUB_ENV"
 
-  - name: Setup Node.js
+  - name: Setup Node
     uses: actions/setup-node@v4
     with:
       node-version: 22
 
   - name: Install dependencies
-    working-directory: ${{ env.PROJECT_DIR }}
     run: npm ci
+    working-directory: ${{ env.PROJECT_DIR }}
 
-  - name: Build website
+  - name: Build
+    run: npm run build
     working-directory: ${{ env.PROJECT_DIR }}
     env:
       VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-    run: npm run build
 
-  - name: Verify build output
+  - name: Verify output
     run: |
-      test -f "${PROJECT_DIR}/dist/index.html"
-      touch "${PROJECT_DIR}/dist/.nojekyll"
+      test -f "$PROJECT_DIR/dist/index.html"
+      touch "$PROJECT_DIR/dist/.nojekyll"
 
-  - name: Upload Pages artifact
+  - name: Upload artifact
     uses: actions/upload-pages-artifact@v3
     with:
       path: ${{ env.PROJECT_DIR }}/dist
 
 deploy:
+runs-on: ubuntu-latest
+needs: build
+permissions:
+pages: write
+id-token: write
 environment:
 name: github-pages
 url: ${{ steps.deployment.outputs.page_url }}
-runs-on: ubuntu-latest
-needs: build
 steps:
-- name: Deploy to GitHub Pages
+- name: Deploy
 id: deployment
 uses: actions/deploy-pages@v4
