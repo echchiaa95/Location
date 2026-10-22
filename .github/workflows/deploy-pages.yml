@@ -4,9 +4,6 @@ on:
 push:
 branches:
 - main
-paths:
-- '**.zip'
-- '.github/workflows/deploy-pages.yml'
 workflow_dispatch:
 
 permissions:
@@ -29,53 +26,24 @@ uses: actions/checkout@v4
     shell: bash
     run: |
       set -euo pipefail
-
-      ZIP_FILE="$(find . -type f -iname '*.zip' \
-        -not -path './.git/*' | head -n 1)"
-
+      ZIP_FILE="$(find . -type f -iname '*.zip' -not -path './.git/*' | head -n 1)"
       if [ -z "$ZIP_FILE" ]; then
-        echo "ERROR: No ZIP file found in repository."
-        echo "Upload your Elite Drive ZIP to GitHub first."
+        echo "ERROR: No ZIP file found. Upload the project ZIP to the repository."
         exit 1
       fi
-
-      echo "Using archive: $ZIP_FILE"
       mkdir -p extracted
       unzip -q "$ZIP_FILE" -d extracted
-
-      PACKAGE_FILE="$(find extracted -type f \
-        -name package.json | head -n 1)"
-
+      PACKAGE_FILE="$(find extracted -type f -name package.json | head -n 1)"
       if [ -z "$PACKAGE_FILE" ]; then
         echo "ERROR: package.json not found in ZIP."
         exit 1
       fi
-
-      PROJECT_DIR="$(dirname "$PACKAGE_FILE")"
-      echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-      echo "Project directory: $PROJECT_DIR"
+      echo "PROJECT_DIR=$(dirname "$PACKAGE_FILE")" >> "$GITHUB_ENV"
 
   - name: Setup Node.js
     uses: actions/setup-node@v4
     with:
       node-version: 22
-      cache: npm
-      cache-dependency-path: extracted/**/package-lock.json
-
-  - name: Configure Supabase
-    shell: bash
-    env:
-      SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-      SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-    run: |
-      set -euo pipefail
-      if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-        echo "ERROR: Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in GitHub Actions Variables."
-        exit 1
-      fi
-
-      echo "VITE_SUPABASE_URL=$SUPABASE_URL" >> "$GITHUB_ENV"
-      echo "VITE_SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> "$GITHUB_ENV"
 
   - name: Install dependencies
     working-directory: ${{ env.PROJECT_DIR }}
@@ -84,19 +52,14 @@ uses: actions/checkout@v4
   - name: Build website
     working-directory: ${{ env.PROJECT_DIR }}
     env:
-      VITE_BASE_PATH: /${{ github.event.repository.name }}/
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
     run: npm run build
 
   - name: Verify build output
-    shell: bash
     run: |
-      set -euo pipefail
-      if [ ! -f "$PROJECT_DIR/dist/index.html" ]; then
-        echo "ERROR: dist/index.html was not generated."
-        exit 1
-      fi
-
-      touch "$PROJECT_DIR/dist/.nojekyll"
+      test -f "${PROJECT_DIR}/dist/index.html"
+      touch "${PROJECT_DIR}/dist/.nojekyll"
 
   - name: Upload Pages artifact
     uses: actions/upload-pages-artifact@v3
