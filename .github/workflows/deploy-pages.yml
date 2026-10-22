@@ -1,99 +1,115 @@
-
 name: Build ZIP and Deploy Elite Drive
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+push:
+branches:
+- main
+paths:
+- '**.zip'
+- '.github/workflows/deploy-pages.yml'
+workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+contents: read
+pages: write
+id-token: write
 
 concurrency:
-  group: github-pages
-  cancel-in-progress: true
+group: pages
+cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+build:
+runs-on: ubuntu-latest
+steps:
+- name: Checkout repository
+uses: actions/checkout@v4
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  - name: Find and extract ZIP
+    shell: bash
+    run: |
+      set -euo pipefail
 
-      - name: Find and extract ZIP
-        run: |
-          set -e
-          ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" -print -quit)
+      ZIP_FILE="$(find . -type f -iname '*.zip' \
+        -not -path './.git/*' | head -n 1)"
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found in repository root."
-            exit 1
-          fi
+      if [ -z "$ZIP_FILE" ]; then
+        echo "ERROR: No ZIP file found in repository."
+        echo "Upload your Elite Drive ZIP to GitHub first."
+        exit 1
+      fi
 
-          mkdir -p extracted
-          unzip -oq "$ZIP_FILE" -d extracted
+      echo "Using archive: $ZIP_FILE"
+      mkdir -p extracted
+      unzip -q "$ZIP_FILE" -d extracted
 
-          PACKAGE_FILE=$(find extracted -name package.json -print -quit)
+      PACKAGE_FILE="$(find extracted -type f \
+        -name package.json | head -n 1)"
 
-          if [ -z "$PACKAGE_FILE" ]; then
-            echo "ERROR: package.json not found inside ZIP."
-            exit 1
-          fi
+      if [ -z "$PACKAGE_FILE" ]; then
+        echo "ERROR: package.json not found in ZIP."
+        exit 1
+      fi
 
-          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      PROJECT_DIR="$(dirname "$PACKAGE_FILE")"
+      echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+      echo "Project directory: $PROJECT_DIR"
 
-          echo "Project directory: $PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
+  - name: Setup Node.js
+    uses: actions/setup-node@v4
+    with:
+      node-version: 22
+      cache: npm
+      cache-dependency-path: extracted/**/package-lock.json
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+  - name: Configure Supabase
+    shell: bash
+    env:
+      SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+    run: |
+      set -euo pipefail
+      if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+        echo "ERROR: Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in GitHub Actions Variables."
+        exit 1
+      fi
 
-      - name: Configure Supabase
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          cat > .env.production <<'EOF'
-          VITE_SUPABASE_URL=https://cyvyrqilxxqladucyadk.supabase.co
-          VITE_SUPABASE_ANON_KEY=sb_publishable_nLEJK83bU1PgTrcWADw77Q_Bh-iWLDN
-          EOF
+      echo "VITE_SUPABASE_URL=$SUPABASE_URL" >> "$GITHUB_ENV"
+      echo "VITE_SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+  - name: Install dependencies
+    working-directory: ${{ env.PROJECT_DIR }}
+    run: npm ci
 
-      - name: Build website
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          npm run build -- --base="/${GITHUB_REPOSITORY#*/}/"
+  - name: Build website
+    working-directory: ${{ env.PROJECT_DIR }}
+    env:
+      VITE_BASE_PATH: /${{ github.event.repository.name }}/
+    run: npm run build
 
-      - name: Prepare Pages artifact
-        run: |
-          test -d "$PROJECT_DIR/dist"
-          touch "$PROJECT_DIR/dist/.nojekyll"
+  - name: Verify build output
+    shell: bash
+    run: |
+      set -euo pipefail
+      if [ ! -f "$PROJECT_DIR/dist/index.html" ]; then
+        echo "ERROR: dist/index.html was not generated."
+        exit 1
+      fi
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ${{ env.PROJECT_DIR }}/dist
+      touch "$PROJECT_DIR/dist/.nojekyll"
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  - name: Upload Pages artifact
+    uses: actions/upload-pages-artifact@v3
+    with:
+      path: ${{ env.PROJECT_DIR }}/dist
 
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+deploy:
+environment:
+name: github-pages
+url: ${{ steps.deployment.outputs.page_url }}
+runs-on: ubuntu-latest
+needs: build
+steps:
+- name: Deploy to GitHub Pages
+id: deployment
+uses: actions/deploy-pages@v4
